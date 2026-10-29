@@ -31,6 +31,7 @@ from app.multiorg import organizacion_del_despacho
 from app.http_limits import limited_body
 from app.state import AppContext, InboundMessage
 from app.turn import conversation_lock, handle_flush, marca_de_leido
+from app.ponerse_al_dia import mensajes_al_dia
 
 logger = logging.getLogger("nea.dispatch")
 
@@ -318,6 +319,8 @@ async def _procesar(ctx: AppContext, payload: dict[str, Any], *, durable: bool =
     await handle_flush(
         ctx_turno, identity, mensajes, crm_conversation_id=conversation_id,
         propagate_errors=durable,
+        # Módulo de la agencia: lo que pasó mientras Nea no habló.
+        al_dia=mensajes_al_dia(payload),
     )
 
 

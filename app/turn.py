@@ -30,6 +30,7 @@ from app.stall import (
     sin_rumbo,
     trae_contenido,
 )
+from app.ponerse_al_dia import anotar_al_dia
 from app.profile import resolve_profile
 from app.prompt import build_system_prompt, zona_del_negocio
 from app.state import AppContext, BotMessage, InboundMessage, utcnow
@@ -114,6 +115,9 @@ class _Turno:
     crm_conversation_id: str | None = None
     # El motivo del handoff que este turno ya registró, si registró uno.
     handoff: str | None = None
+    # Módulo de la agencia: lo que pasó mientras Nea no habló
+    # (`ponerseAlDia` del despacho). Ver app/ponerse_al_dia.py.
+    al_dia: list[dict[str, str]] = field(default_factory=list)
 
 
 class TurnoSinCrm(Exception):
@@ -165,6 +169,7 @@ async def handle_flush(
     crm_conversation_id: str | None = None,
     *,
     propagate_errors: bool = False,
+    al_dia: list[dict[str, str]] | None = None,
 ) -> None:
     """El turno de un despacho. Sin `propagate_errors`, nunca lanza.
 
@@ -181,7 +186,7 @@ async def handle_flush(
     conversación es. La cola del despacho llama con `propagate_errors`: el
     error sube y es ella la que decide (app/dispatch_worker.py).
     """
-    turno = _Turno(crm_conversation_id=crm_conversation_id or None)
+    turno = _Turno(crm_conversation_id=crm_conversation_id or None, al_dia=al_dia or [])
     try:
         async with conversation_lock(ctx, identity):
             await run_turn(ctx, identity, items, turno)
@@ -361,6 +366,12 @@ async def run_turn(
         return
 
     user_text = "\n".join(parts)
+    # Módulo de la agencia: lo que pasó mientras Nea no habló entra ANTES del
+    # mensaje del cliente, para que el historial quede en orden.
+    if turno.al_dia:
+        contados = await anotar_al_dia(ctx, conv.id, turno.al_dia)
+        if contados:
+            logger.info("turno %s: me puse al día con %d mensaje(s)", identity, contados)
     await ctx.store.add_message(
         conv.id, "user", user_text, wa_message_id=inbound[0].wa_message_id
     )
