@@ -287,6 +287,23 @@ class CrmClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def send_library_item(self, conversation_id: str, archivo_id: str) -> dict[str, Any]:
+        """Módulo de la agencia — manda un archivo de la Biblioteca
+        (`POST /api/bot/biblioteca`). Los 404/409/410 suben como `CrmConflict`
+        con el sobre de error: su mensaje es lo que el modelo necesita para
+        seguir (ventana cerrada, ya enviado hoy, tope del día)."""
+        resp = await self._request(
+            "POST",
+            "/api/bot/biblioteca",
+            json={"conversationId": conversation_id, "archivoId": archivo_id},
+        )
+        if resp.status_code in (404, 409, 410, 422):
+            raise CrmConflict(_conflict_code(resp), _payload(resp))
+        if resp.status_code != 200:
+            raise CrmError(f"biblioteca devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
     async def post_handoff(self, conversation_id: str, reason: str | None = None) -> None:
         resp = await self._request(
             "POST",

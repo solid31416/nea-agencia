@@ -247,6 +247,72 @@ def con_mover_etapa(schemas: list[dict[str, Any]], etapas: list[str]) -> list[di
     return schemas + [MOVE_STAGE_SCHEMA] if etapas else schemas
 
 
+# Módulo de la agencia — la Biblioteca del CRM (fotos, videos y fichas). Igual
+# que move_stage, no va en TOOL_SCHEMAS: existe solo cuando el contexto del
+# turno trae `biblioteca` (el CRM la manda con su bandera BIBLIOTECA y la
+# herramienta encendida), y el modelo solo puede pedir ids de esa lista.
+MAX_ARCHIVOS_POR_TURNO = 3
+
+
+def biblioteca_del_contexto(context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Los archivos de `biblioteca` del contexto, limpios; vacía si no vienen."""
+    crudos = (context or {}).get("biblioteca")
+    if not isinstance(crudos, list):
+        return []
+    limpios: list[dict[str, Any]] = []
+    for a in crudos:
+        if not isinstance(a, dict):
+            continue
+        ident, titulo = a.get("id"), a.get("titulo")
+        if not (isinstance(ident, str) and ident.strip() and isinstance(titulo, str) and titulo.strip()):
+            continue
+        limpios.append(
+            {
+                "id": ident.strip(),
+                "titulo": titulo.strip(),
+                "cuando": str(a.get("cuando") or "").strip(),
+                "tipo": str(a.get("tipo") or "foto"),
+                "yaEnviado": a.get("yaEnviado") is True,
+            }
+        )
+    return limpios
+
+
+def send_media_schema(archivos: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "send_media",
+            "description": (
+                "Manda al lead por WhatsApp una foto, video o PDF de la biblioteca "
+                "del negocio. Úsala cuando el lead pide ver algo (fotos, cómo se "
+                "ve, un video, la ficha) o cuando un archivo responde justo lo que "
+                "pregunta, según su «cuándo mandarlo». Llámala EN EL MISMO TURNO en "
+                "que contestas; el archivo le llega antes que tu texto, así que tu "
+                "texto lo acompaña («aquí lo ves de noche»). Máximo "
+                f"{MAX_ARCHIVOS_POR_TURNO} por turno. No repitas uno marcado como "
+                "ya enviado salvo que lo pida otra vez. Solo ids de la lista del contexto."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "archivo_id": {
+                        "type": "string",
+                        "enum": [a["id"] for a in archivos],
+                        "description": "El id del archivo, tal cual aparece en el contexto",
+                    }
+                },
+                "required": ["archivo_id"],
+            },
+        },
+    }
+
+
+def con_biblioteca(schemas: list[dict[str, Any]], archivos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """El catálogo del turno más `send_media` si hay archivos que mandar."""
+    return schemas + [send_media_schema(archivos)] if archivos else schemas
+
+
 # Recordatorios de la cita: SOLO los manda la agenda v2 de Vocero Cloud. El
 # CRM raíz no tiene recordatorios, y con este campo obligatorio en su
 # book_session el modelo, para llenarlo, le preguntaba al lead «¿te mando un
@@ -282,6 +348,7 @@ CLAVE_DE_HERRAMIENTA = {
     "reschedule_session": "reprogramar",
     "route_out": "salida",
     "handoff": "escalar",
+    "send_media": "biblioteca",
 }
 
 
@@ -468,10 +535,14 @@ class ToolRuntime:
         tz: ZoneInfo | None = None,
         conversacion_reciente: str | None = None,
         etapas: list[str] | None = None,
+        biblioteca: list[dict[str, Any]] | None = None,
     ) -> None:
         self._ctx = ctx
         # 038 — A qué etapas puede mover al lead (`lead.nextStages`).
         self.etapas: list[str] = list(etapas or [])
+        # Módulo de la agencia — qué archivos de la biblioteca puede mandar.
+        self.biblioteca: list[dict[str, Any]] = list(biblioteca or [])
+        self.archivos_enviados: list[str] = []
         # Lo último que se dijo en la conversación (app/dias.py). None ⇒ no
         # se sabe, y la fecha del modelo pasa sin revisar.
         self._conversacion_reciente = conversacion_reciente
@@ -503,6 +574,8 @@ class ToolRuntime:
                 return await self._update_ficha(args)
             if name == "move_stage":
                 return await self._move_stage(args)
+            if name == "send_media":
+                return await self._send_media(args)
             if name == "propose_slots":
                 return await self._propose_slots(args)
             if name == "book_session":
@@ -546,6 +619,37 @@ class ToolRuntime:
         movida = ((data or {}).get("lead") or {}).get("stageName") or etapa
         self.etapa_movida = movida
         return {"ok": True, "etapa": movida, "nota": "hecho; no se lo anuncies al lead"}
+
+    async def _send_media(self, args: dict[str, Any]) -> dict[str, Any]:
+        archivo_id = str(args.get("archivo_id") or "").strip()
+        por_id = {a["id"]: a for a in self.biblioteca}
+        if archivo_id not in por_id:
+            return {
+                "ok": False,
+                "error": "archivo_desconocido",
+                "archivos": [{"id": a["id"], "titulo": a["titulo"]} for a in self.biblioteca],
+            }
+        if archivo_id in self.archivos_enviados:
+            return {"ok": False, "error": "ya_enviado", "detalle": "ya lo mandaste en este turno"}
+        if len(self.archivos_enviados) >= MAX_ARCHIVOS_POR_TURNO:
+            return {"ok": False, "error": "limite", "detalle": f"máximo {MAX_ARCHIVOS_POR_TURNO} archivos por turno"}
+        enviar = getattr(self._ctx.crm, "send_library_item", None)
+        if not callable(enviar):
+            return {"ok": False, "error": "sin_biblioteca"}
+        try:
+            await enviar(self._crm_conv_id, archivo_id)
+        except CrmConflict as exc:
+            # El CRM manda la regla (ventana cerrada, ya enviado hoy, tope del
+            # día): su mensaje dice qué pasó, y con eso el modelo sigue.
+            error = exc.payload.get("error")
+            detalle = error.get("message") if isinstance(error, dict) else None
+            return {"ok": False, "error": exc.code, "detalle": detalle or "no se mandó"}
+        self.archivos_enviados.append(archivo_id)
+        return {
+            "ok": True,
+            "enviado": por_id[archivo_id]["titulo"],
+            "nota": "ya le llegó al lead; acompáñalo con tu texto, sin decir que es un archivo de la biblioteca",
+        }
 
     async def _propose_slots(self, args: dict[str, Any]) -> dict[str, Any]:
         fecha = _fecha_pedida(args.get("fecha"))

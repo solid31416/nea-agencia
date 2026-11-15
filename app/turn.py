@@ -36,6 +36,8 @@ from app.prompt import build_system_prompt, zona_del_negocio
 from app.state import AppContext, BotMessage, InboundMessage, utcnow
 from app.tools import (
     ToolRuntime,
+    biblioteca_del_contexto,
+    con_biblioteca,
     con_mover_etapa,
     etapas_siguientes,
     solo_encendidas,
@@ -459,6 +461,7 @@ async def run_turn(
         tz=tz,
         conversacion_reciente=_conversacion_reciente(history),
         etapas=etapas_siguientes(context),
+        biblioteca=biblioteca_del_contexto(context),
     )
     try:
         final_text = await _tool_loop(ctx, messages, runtime)
@@ -740,13 +743,16 @@ async def _tool_loop(
         reply = await ctx.llm.complete(
             messages,
             tools=solo_encendidas(
-                con_mover_etapa(
-                    tool_schemas(
-                        ctx.agenda_enabled,
-                        bool(getattr(ctx.crm, "supports_agenda_v2", False)),
-                        bool(getattr(ctx.crm, "supports_coordination", False)),
+                con_biblioteca(
+                    con_mover_etapa(
+                        tool_schemas(
+                            ctx.agenda_enabled,
+                            bool(getattr(ctx.crm, "supports_agenda_v2", False)),
+                            bool(getattr(ctx.crm, "supports_coordination", False)),
+                        ),
+                        getattr(runtime, "etapas", []),
                     ),
-                    getattr(runtime, "etapas", []),
+                    getattr(runtime, "biblioteca", []),
                 ),
                 getattr(runtime, "_profile", None),
             ),

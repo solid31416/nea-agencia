@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import json
 from app.profile import BusinessProfile
 from app.state import Conversation, OfferedSlot
-from app.tools import etapas_siguientes
+from app.tools import biblioteca_del_contexto, etapas_siguientes
 
 DEFAULT_TZ = ZoneInfo("America/Mexico_City")
 
@@ -487,6 +487,27 @@ def build_system_prompt(
             "nombre mejor describa dónde va; si dudas, la primera. NO lo muevas "
             "por un saludo, un «ok» o una duda suelta sin intención, ni a una "
             "etapa que ya pasó. Es interno: jamás se lo anuncies."
+        )
+    # Módulo de la agencia — la Biblioteca: qué puede mandar y cuándo. Sin
+    # «cuándo» concreto los modelos o no mandan nada o mandan todo de golpe.
+    archivos = biblioteca_del_contexto(context)
+    if archivos and profile.permite("biblioteca"):
+        tipos = {"foto": "foto", "video": "video", "documento": "PDF"}
+        lineas_bib = [
+            f"  · {a['id']} — {tipos.get(a['tipo'], a['tipo'])}: {a['titulo']}"
+            + (f". Cuándo: {a['cuando']}" if a["cuando"] else "")
+            + (" (ya enviado en esta conversación)" if a["yaEnviado"] else "")
+            for a in archivos
+        ]
+        lines.append(
+            "- Biblioteca: puedes mandarle al lead estos archivos con send_media, "
+            "EN ESTE MISMO TURNO junto con tu respuesta, cuando pide ver algo "
+            "(fotos, video, cómo se ve, la ficha) o cuando uno responde justo lo "
+            "que pregunta según su «cuándo». Elige el que mejor encaje (uno, o "
+            "hasta tres si pide ver varios). No los mandes todos de golpe ni "
+            "repitas los ya enviados salvo que lo pida. Si pide ver algo que no "
+            "está aquí, no lo prometas: ofrécele pasarlo con una persona.\n"
+            + "\n".join(lineas_bib)
         )
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}
