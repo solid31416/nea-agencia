@@ -290,8 +290,10 @@ def send_media_schema(archivos: list[dict[str, Any]]) -> dict[str, Any]:
                 "pregunta, según su «cuándo mandarlo». Llámala EN EL MISMO TURNO en "
                 "que contestas; el archivo le llega antes que tu texto, así que tu "
                 "texto lo acompaña («aquí lo ves de noche»). Máximo "
-                f"{MAX_ARCHIVOS_POR_TURNO} por turno. No repitas uno marcado como "
-                "ya enviado salvo que lo pida otra vez. Solo ids de la lista del contexto."
+                f"{MAX_ARCHIVOS_POR_TURNO} por turno. No repitas uno ya enviado salvo "
+                "que lo pida otra vez (entonces sí, llámala de nuevo). Solo ids de la "
+                "lista del contexto. Nunca digas que mandaste un archivo sin que esta "
+                "herramienta te haya respondido ok."
             ),
             "parameters": {
                 "type": "object",

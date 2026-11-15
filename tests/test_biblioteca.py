@@ -81,7 +81,8 @@ async def test_con_biblioteca_se_ensena_y_manda(respx_mock):
     assert herramienta["function"]["parameters"]["properties"]["archivo_id"]["enum"] == ["bib_noche", "bib_armado"]
     sistema = primera["messages"][0]["content"]
     assert "bib_noche — foto: Domo de noche. Cuándo: Si pregunta cómo se ve" in sistema
-    assert "bib_armado — video: Armado en un día (ya enviado en esta conversación)" in sistema
+    assert "bib_armado — video: Armado en un día (se lo mandaste en un turno anterior)" in sistema
+    assert "Solo di que le mandaste algo si send_media te respondió ok" in sistema
     assert bib.called
     assert json.loads(bib.calls[0].request.content) == {"conversationId": CRM_CONV_ID, "archivoId": "bib_noche"}
     resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])

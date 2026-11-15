@@ -496,7 +496,7 @@ def build_system_prompt(
         lineas_bib = [
             f"  · {a['id']} — {tipos.get(a['tipo'], a['tipo'])}: {a['titulo']}"
             + (f". Cuándo: {a['cuando']}" if a["cuando"] else "")
-            + (" (ya enviado en esta conversación)" if a["yaEnviado"] else "")
+            + (" (se lo mandaste en un turno anterior)" if a["yaEnviado"] else "")
             for a in archivos
         ]
         lines.append(
@@ -505,8 +505,12 @@ def build_system_prompt(
             "(fotos, video, cómo se ve, la ficha) o cuando uno responde justo lo "
             "que pregunta según su «cuándo». Elige el que mejor encaje (uno, o "
             "hasta tres si pide ver varios). No los mandes todos de golpe ni "
-            "repitas los ya enviados salvo que lo pida. Si pide ver algo que no "
-            "está aquí, no lo prometas: ofrécele pasarlo con una persona.\n"
+            "repitas los ya enviados salvo que lo pida; si lo pide otra vez "
+            "(«no me llegó», «reenvíamela»), vuelve a llamar send_media. Solo "
+            "di que le mandaste algo si send_media te respondió ok EN ESTE "
+            "turno; si no la llamaste o falló, no digas que lo mandaste. Si "
+            "pide ver algo que no está aquí, no lo prometas: ofrécele pasarlo "
+            "con una persona.\n"
             + "\n".join(lineas_bib)
         )
     ficha = contact.get("ficha") or {}
