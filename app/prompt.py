@@ -475,9 +475,13 @@ def build_system_prompt(
             "(una letra, un apodo, un emoji). Cuando se presente o te diga a "
             "nombre de quién va la cotización, guárdalo con update_ficha: "
             "`nombre` (nombre y apellido) y `empresa` si habla por un negocio. "
-            "Si pide cotización o precio formal y no sabes su nombre real, "
-            "pregúntale con naturalidad a nombre de quién la hacemos (persona o "
-            "empresa). No se lo vuelvas a preguntar si ya lo dio."
+            "Pregúntale a nombre de quién va la cotización (persona o empresa) "
+            "SOLO cuando ya esté claro QUÉ se le va a cotizar (el modelo o "
+            "producto y la cantidad) y no sepas su nombre real: es el último "
+            "dato antes de pasarla a preparar, nunca el primero. Si todavía no "
+            "elige, primero ayúdale a elegir: muéstrale las opciones que tiene "
+            "el negocio y recomiéndale una según lo que te contó. No se lo "
+            "vuelvas a preguntar si ya lo dio."
         )
     if lead.get("stageName"):
         lines.append(f"- Etapa en el pipeline: {lead['stageName']}.")

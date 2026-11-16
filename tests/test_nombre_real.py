@@ -29,10 +29,11 @@ def _prompt(perfil: BusinessProfile) -> str:
 def test_el_prompt_pide_el_nombre_real():
     prompt = _prompt(BusinessProfile(agent_name="Sofi"))
     assert "- Nombre del lead: J." in prompt
-    assert "a nombre de quién la hacemos" in prompt
+    assert "a nombre de quién va la cotización" in prompt
+    assert "nunca el primero" in prompt
     assert "`nombre` (nombre y apellido)" in prompt
 
 
 def test_sin_ficha_no_se_pide():
     prompt = _prompt(BusinessProfile(agent_name="Sofi", tools=frozenset({"salida"})))
-    assert "a nombre de quién la hacemos" not in prompt
+    assert "a nombre de quién va la cotización" not in prompt
