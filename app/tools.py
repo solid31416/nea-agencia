@@ -56,6 +56,21 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    # Módulo de la agencia — el nombre real (el del perfil de
+                    # WhatsApp suele ser una letra o un apodo). El CRM, con su
+                    # bandera NOMBRE_REAL, lo pone como nombre del contacto.
+                    "nombre": {
+                        "type": "string",
+                        "description": (
+                            "Nombre y apellido con el que el lead SE PRESENTÓ o a cuyo "
+                            "nombre quiere la cotización. Nunca el de su perfil de "
+                            "WhatsApp ni uno inventado."
+                        ),
+                    },
+                    "empresa": {
+                        "type": "string",
+                        "description": "Negocio o empresa por la que habla, si lo dijo.",
+                    },
                     "rubro": {"type": "string"},
                     "rol": {
                         "type": "string",

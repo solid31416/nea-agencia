@@ -467,6 +467,18 @@ def build_system_prompt(
     lead = (context or {}).get("lead") or {}
     if contact.get("name"):
         lines.append(f"- Nombre del lead: {contact['name']}.")
+    # Módulo de la agencia — el nombre real ligado al número. El del perfil de
+    # WhatsApp muchas veces es «J», un apodo o el de otra persona.
+    if profile.permite("ficha"):
+        lines.append(
+            "- Ese nombre puede venir de su perfil de WhatsApp y no ser el real "
+            "(una letra, un apodo, un emoji). Cuando se presente o te diga a "
+            "nombre de quién va la cotización, guárdalo con update_ficha: "
+            "`nombre` (nombre y apellido) y `empresa` si habla por un negocio. "
+            "Si pide cotización o precio formal y no sabes su nombre real, "
+            "pregúntale con naturalidad a nombre de quién la hacemos (persona o "
+            "empresa). No se lo vuelvas a preguntar si ya lo dio."
+        )
     if lead.get("stageName"):
         lines.append(f"- Etapa en el pipeline: {lead['stageName']}.")
     # 038 — Con la herramienta encendida y a dónde ir, se le dice a qué
