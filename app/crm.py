@@ -296,6 +296,9 @@ class CrmClient:
             "POST",
             "/api/bot/biblioteca",
             json={"conversationId": conversation_id, "archivoId": archivo_id},
+            # Un producto puede traer varias fotos y el CRM las sube a Meta
+            # una por una: 15 s no alcanzan.
+            timeout=90.0,
         )
         if resp.status_code in (404, 409, 410, 422):
             raise CrmConflict(_conflict_code(resp), _payload(resp))

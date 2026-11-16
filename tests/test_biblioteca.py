@@ -22,6 +22,7 @@ from tests.conftest import CRM_CONV_ID, CRM_URL, crm_context, despachar, make_ct
 ARCHIVOS = [
     {"id": "bib_noche", "titulo": "Domo de noche", "cuando": "Si pregunta cómo se ve", "tipo": "foto", "yaEnviado": False},
     {"id": "bib_armado", "titulo": "Armado en un día", "cuando": "", "tipo": "video", "yaEnviado": True},
+    {"id": "bib_mini", "titulo": "Domo Modelo Mini", "cuando": "", "tipo": "foto", "yaEnviado": False, "cantidad": 5},
 ]
 
 
@@ -53,7 +54,9 @@ async def _turno(ctx, texto="¿me mandas fotos de cómo se ve?"):
 
 
 def test_biblioteca_del_contexto():
-    assert [a["id"] for a in biblioteca_del_contexto({"biblioteca": ARCHIVOS})] == ["bib_noche", "bib_armado"]
+    limpios = biblioteca_del_contexto({"biblioteca": ARCHIVOS})
+    assert [a["id"] for a in limpios] == ["bib_noche", "bib_armado", "bib_mini"]
+    assert [a["cantidad"] for a in limpios] == [1, 1, 5]
     assert biblioteca_del_contexto({}) == []
     assert biblioteca_del_contexto(None) == []
     assert biblioteca_del_contexto({"biblioteca": [{"id": "x"}, "y", {"titulo": "t"}]}) == []
@@ -78,11 +81,12 @@ async def test_con_biblioteca_se_ensena_y_manda(respx_mock):
 
     primera = ctx.llm.calls[0]
     herramienta = next(t for t in primera["tools"] if t["function"]["name"] == "send_media")
-    assert herramienta["function"]["parameters"]["properties"]["archivo_id"]["enum"] == ["bib_noche", "bib_armado"]
+    assert herramienta["function"]["parameters"]["properties"]["archivo_id"]["enum"] == ["bib_noche", "bib_armado", "bib_mini"]
     sistema = primera["messages"][0]["content"]
     assert "bib_noche — foto: Domo de noche. Cuándo: Si pregunta cómo se ve" in sistema
     assert "bib_armado — video: Armado en un día (se lo mandaste en un turno anterior)" in sistema
     assert "Solo di que le mandaste algo si send_media te respondió ok" in sistema
+    assert "bib_mini — foto: Domo Modelo Mini (5 archivos que salen juntos)" in sistema
     assert bib.called
     assert json.loads(bib.calls[0].request.content) == {"conversationId": CRM_CONV_ID, "archivoId": "bib_noche"}
     resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
@@ -146,4 +150,28 @@ async def test_sin_biblioteca_en_el_contexto_no_existe(respx_mock):
     mock_crm_basics(respx_mock)
     await _turno(ctx)
     assert "send_media" not in _nombres(ctx.llm.calls[0]["tools"])
+    await ctx.crm.aclose()
+
+
+async def test_varias_fotos_y_el_envio_a_medias(respx_mock):
+    """Un producto de 5 fotos del que solo salieron 3: el modelo no debe decir
+    que mandó todas."""
+    ctx = make_ctx()
+    ctx.profile = _Perfil(BusinessProfile(agent_name="Sofi"))
+    _con_biblioteca(respx_mock)
+    bib = respx_mock.post(f"{CRM_URL}/api/bot/biblioteca").mock(
+        return_value=httpx.Response(
+            200,
+            json={"messageId": "msg_1", "titulo": "Domo Modelo Mini", "status": "sent", "enviados": 3, "total": 5},
+        )
+    )
+    ctx.llm.replies = [
+        LlmReply(content=None, tool_calls=[ToolCall(id="s", name="send_media", arguments={"archivo_id": "bib_mini"})]),
+        LlmReply(content="Te dejo unas fotos del Mini."),
+    ]
+    await _turno(ctx)
+    assert bib.called
+    resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
+    assert resultado["ok"] is True and resultado["archivos_enviados"] == 3
+    assert "solo le llegaron 3 de 5" in resultado["nota"]
     await ctx.crm.aclose()

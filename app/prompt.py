@@ -495,6 +495,7 @@ def build_system_prompt(
         tipos = {"foto": "foto", "video": "video", "documento": "PDF"}
         lineas_bib = [
             f"  · {a['id']} — {tipos.get(a['tipo'], a['tipo'])}: {a['titulo']}"
+            + (f" ({a['cantidad']} archivos que salen juntos)" if a.get("cantidad", 1) > 1 else "")
             + (f". Cuándo: {a['cuando']}" if a["cuando"] else "")
             + (" (se lo mandaste en un turno anterior)" if a["yaEnviado"] else "")
             for a in archivos

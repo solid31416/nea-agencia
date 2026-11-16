@@ -254,6 +254,11 @@ def con_mover_etapa(schemas: list[dict[str, Any]], etapas: list[str]) -> list[di
 MAX_ARCHIVOS_POR_TURNO = 3
 
 
+def _cantidad(valor: Any) -> int:
+    """Cuántos archivos salen juntos (varias fotos del mismo producto)."""
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) and valor > 1 else 1
+
+
 def biblioteca_del_contexto(context: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Los archivos de `biblioteca` del contexto, limpios; vacía si no vienen."""
     crudos = (context or {}).get("biblioteca")
@@ -273,6 +278,7 @@ def biblioteca_del_contexto(context: dict[str, Any] | None) -> list[dict[str, An
                 "cuando": str(a.get("cuando") or "").strip(),
                 "tipo": str(a.get("tipo") or "foto"),
                 "yaEnviado": a.get("yaEnviado") is True,
+                "cantidad": _cantidad(a.get("cantidad")),
             }
         )
     return limpios
@@ -639,7 +645,7 @@ class ToolRuntime:
         if not callable(enviar):
             return {"ok": False, "error": "sin_biblioteca"}
         try:
-            await enviar(self._crm_conv_id, archivo_id)
+            respuesta = await enviar(self._crm_conv_id, archivo_id)
         except CrmConflict as exc:
             # El CRM manda la regla (ventana cerrada, ya enviado hoy, tope del
             # día): su mensaje dice qué pasó, y con eso el modelo sigue.
@@ -647,11 +653,21 @@ class ToolRuntime:
             detalle = error.get("message") if isinstance(error, dict) else None
             return {"ok": False, "error": exc.code, "detalle": detalle or "no se mandó"}
         self.archivos_enviados.append(archivo_id)
-        return {
+        resultado: dict[str, Any] = {
             "ok": True,
             "enviado": por_id[archivo_id]["titulo"],
             "nota": "ya le llegó al lead; acompáñalo con tu texto, sin decir que es un archivo de la biblioteca",
         }
+        enviados = respuesta.get("enviados") if isinstance(respuesta, dict) else None
+        total = respuesta.get("total") if isinstance(respuesta, dict) else None
+        if isinstance(enviados, int) and isinstance(total, int) and total > 1:
+            resultado["archivos_enviados"] = enviados
+            if enviados < total:
+                resultado["nota"] = (
+                    f"solo le llegaron {enviados} de {total}; no digas que le mandaste todas, "
+                    "y ofrécele pasarlo con una persona si quiere ver las demás"
+                )
+        return resultado
 
     async def _propose_slots(self, args: dict[str, Any]) -> dict[str, Any]:
         fecha = _fecha_pedida(args.get("fecha"))
