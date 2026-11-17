@@ -160,6 +160,8 @@ async def test_cotiza_sin_mandar_precios(respx_mock):
     assert resultado["ok"] is True and resultado["estado"] == "por_aprobar" and resultado["folio"] == "COT-0007"
     assert rutas["messages"].called
     assert not rutas["handoff"].called
+    # El nombre que dio queda en la ficha.
+    assert {"nombre": "Saúl"} in [json.loads(c.request.content)["ficha"] for c in rutas["ficha"].calls]
     await ctx.crm.aclose()
 
 
@@ -188,7 +190,7 @@ async def test_rebasa_el_limite_pasa_a_una_persona(respx_mock):
         )
     )
     ctx.llm.replies = [
-        LlmReply(content=None, tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 8}]})]),
+        LlmReply(content=None, tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 8}], "a_nombre_de": "Saúl Garza"})]),
         LlmReply(content="Para 8 domos un asesor te prepara tu cotización en breve."),
     ]
     await _turno(ctx, "quiero 8 domos")
@@ -209,7 +211,7 @@ async def test_error_corregible_no_escala(respx_mock):
         )
     )
     ctx.llm.replies = [
-        LlmReply(content=None, tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 1}]})]),
+        LlmReply(content=None, tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 1}], "a_nombre_de": "Saúl Garza"})]),
         LlmReply(content="Un asesor ya está preparando tu cotización."),
     ]
     await _turno(ctx)
@@ -217,3 +219,60 @@ async def test_error_corregible_no_escala(respx_mock):
     assert resultado == {"ok": False, "error": "persona_armando", "detalle": "Un asesor ya está armando su cotización"}
     assert not rutas["handoff"].called
     await ctx.crm.aclose()
+
+
+async def test_sin_nombre_real_no_cotiza(respx_mock):
+    # La plática de «J» (2026-11-17): la cotización salió a nombre de «J».
+    ctx = _ctx()
+    _con_vendedor(respx_mock)
+    cot = respx_mock.post(f"{CRM_URL}/api/bot/cotizacion").mock(return_value=httpx.Response(200, json={}))
+    ctx.llm.replies = [
+        LlmReply(
+            content=None,
+            tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 3}], "a_nombre_de": "J"})],
+        ),
+        LlmReply(content="¡Va! ¿A nombre de quién te la preparo?"),
+    ]
+    await _turno(ctx, "Dame una cotización del mini, quiero 3")
+    primera = ctx.llm.calls[0]
+    herramienta = next(t for t in primera["tools"] if t["function"]["name"] == "cotizar")
+    assert herramienta["function"]["parameters"]["required"] == ["items", "a_nombre_de"]
+    assert "Todavía NO sabes su nombre real" in primera["messages"][0]["content"]
+    resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
+    assert resultado["ok"] is False and resultado["error"] == "falta_nombre"
+    assert not cot.called
+    await ctx.crm.aclose()
+
+
+async def test_el_nombre_de_la_ficha_vale(respx_mock):
+    ctx = _ctx()
+    rutas = mock_crm_basics(respx_mock)
+    contexto = crm_context()
+    contexto["vendedor"] = VENDEDOR
+    contexto["contact"]["ficha"] = {"nombre": "Saúl Garza"}
+    rutas["context"].mock(return_value=httpx.Response(200, json=contexto))
+    cot = respx_mock.post(f"{CRM_URL}/api/bot/cotizacion").mock(
+        return_value=httpx.Response(200, json={"estado": "enviada", "folio": "COT-0008", "total": "$145,000.00"})
+    )
+    ctx.llm.replies = [
+        LlmReply(content=None, tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 1}]})]),
+        LlmReply(content="Arriba te dejé tu cotización."),
+    ]
+    await _turno(ctx)
+    primera = ctx.llm.calls[0]
+    herramienta = next(t for t in primera["tools"] if t["function"]["name"] == "cotizar")
+    assert herramienta["function"]["parameters"]["required"] == ["items"]
+    assert "va a nombre de Saúl Garza" in primera["messages"][0]["content"]
+    assert json.loads(cot.calls[0].request.content)["cliente"] == "Saúl Garza"
+    assert not rutas["ficha"].called
+    await ctx.crm.aclose()
+
+
+def test_nombre_valido():
+    from app.tools import nombre_valido
+
+    assert nombre_valido("J") == ""
+    assert nombre_valido(" 😀. ") == ""
+    assert nombre_valido("123") == ""
+    assert nombre_valido("Ana") == "Ana"
+    assert nombre_valido(" Domos del Norte SA ") == "Domos del Norte SA"

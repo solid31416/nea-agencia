@@ -14,6 +14,7 @@ nunca tumba el turno.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -348,6 +349,12 @@ def _texto(valor: Any) -> str:
     return valor.strip() if isinstance(valor, str) else ""
 
 
+def nombre_valido(valor: Any) -> str:
+    """El nombre para la cotización, o "" si no sirve («J», un emoji, «.»)."""
+    texto = _texto(valor)
+    return texto if len(re.sub(r"[^\w]|[\d_]", "", texto)) >= 3 else ""
+
+
 def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | None:
     """El `vendedor` del contexto, limpio; None si no viene o no sirve."""
     crudo = (context or {}).get("vendedor")
@@ -379,7 +386,14 @@ def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | No
     piezas = crudo.get("piezasMax")
     pendiente = crudo.get("pendiente")
     anticipo = crudo.get("anticipoPct")
+    # A nombre de quién va: solo lo que el cliente DIJO (la ficha), nunca el
+    # nombre de su perfil de WhatsApp, que muchas veces es «J» o un apodo.
+    ficha = ((context or {}).get("contact") or {}).get("ficha") or {}
+    cliente = nombre_valido(ficha.get("nombre")) if isinstance(ficha, dict) else ""
+    if not cliente and isinstance(ficha, dict):
+        cliente = nombre_valido(ficha.get("empresa"))
     return {
+        "clienteConocido": cliente,
         "preciosEnChat": crudo.get("preciosEnChat") is not False,
         "modoEnvio": "sola" if crudo.get("modoEnvio") == "sola" else "aprobar",
         "moneda": _texto(crudo.get("moneda")) or "MXN",
@@ -422,7 +436,12 @@ def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
         },
         "a_nombre_de": {
             "type": "string",
-            "description": "A nombre de quién va (persona o empresa), si el cliente lo dijo; si no, vacío",
+            "description": (
+                "A nombre de quién va: nombre y apellido de la persona, o la empresa, tal "
+                "como el cliente te lo DIJO en esta plática. Nunca el de su perfil de "
+                "WhatsApp ni uno inventado"
+                + (f". Si no lo cambió, «{vendedor['clienteConocido']}»" if vendedor["clienteConocido"] else "")
+            ),
         },
     }
     if vendedor["descuentoMaxPct"] > 0:
@@ -448,7 +467,11 @@ def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
                 f"el sistema los pone. {envio}. Una por turno. Nunca digas que la "
                 "cotización está lista o enviada si esta herramienta no respondió ok."
             ),
-            "parameters": {"type": "object", "properties": propiedades, "required": ["items"]},
+            "parameters": {
+                "type": "object",
+                "properties": propiedades,
+                "required": ["items"] if vendedor["clienteConocido"] else ["items", "a_nombre_de"],
+            },
         },
     }
 
@@ -843,6 +866,18 @@ class ToolRuntime:
             items.append({"productoId": ident, "cantidad": cantidad})
         if not items:
             return {"ok": False, "error": "sin_productos", "detalle": "pregúntale qué modelo y cuántos quiere"}
+        # Sin nombre real no se cotiza: el PDF saldría a nombre de «J».
+        dicho = nombre_valido(args.get("a_nombre_de"))
+        cliente = dicho or self.vendedor.get("clienteConocido") or ""
+        if not cliente:
+            return {
+                "ok": False,
+                "error": "falta_nombre",
+                "detalle": (
+                    "antes de armarla pregúntale a nombre de quién va la cotización (nombre y "
+                    "apellido, o la empresa). No uses el nombre de su perfil de WhatsApp"
+                ),
+            }
         descuento = args.get("descuento_pct") or 0
         if not isinstance(descuento, (int, float)) or isinstance(descuento, bool) or descuento < 0:
             descuento = 0
@@ -850,7 +885,7 @@ class ToolRuntime:
         if not callable(cotizar):
             return sin_permiso
         try:
-            respuesta = await cotizar(self._crm_conv_id, items, str(args.get("a_nombre_de") or "").strip(), descuento)
+            respuesta = await cotizar(self._crm_conv_id, items, cliente, descuento)
         except CrmConflict as exc:
             error = exc.payload.get("error")
             detalle = error.get("message") if isinstance(error, dict) else None
@@ -870,6 +905,12 @@ class ToolRuntime:
             return {"ok": False, "error": exc.code, "detalle": detalle or "no se armó la cotización"}
         data = respuesta if isinstance(respuesta, dict) else {}
         self.cotizacion = data
+        if dicho and dicho != self.vendedor.get("clienteConocido"):
+            # Que el nombre quede en la ficha (y, con NOMBRE_REAL, en el contacto).
+            try:
+                await self._ctx.crm.put_ficha(self._crm_conv_id, {"nombre": dicho})
+            except CrmError as exc:
+                logger.warning("tools: no pude guardar el nombre de la cotización: %s", exc)
         enviada = data.get("estado") == "enviada"
         resultado: dict[str, Any] = {
             "ok": True,

@@ -408,9 +408,18 @@ def reglas_de_vendedor(vendedor: dict) -> str:
         + (f" ({vendedor['iva']})" if vendedor["iva"] else "")
         + ":\n"
         + "\n".join(productos),
-        "  Antes de cotizar, confirma con el cliente qué modelo(s) y cuántos, y "
-        "pregúntale si quiere su cotización; llama cotizar cuando diga que sí. Tú "
+        "  Para cotizar necesitas TRES cosas: qué modelo(s), cuántos, y a nombre de "
+        "quién va. Confírmalas con el cliente y llama cotizar cuando diga que sí. Tú "
         "eliges productos y cantidades; los precios y el total los pone el sistema.",
+        (
+            f"  La cotización va a nombre de {vendedor['clienteConocido']} (te lo dio); "
+            "no se lo vuelvas a preguntar salvo que pida otro nombre."
+            if vendedor["clienteConocido"]
+            else "  Todavía NO sabes su nombre real (el de su perfil de WhatsApp no cuenta). "
+            "Cuando ya esté claro el modelo y la cantidad, pregúntale a nombre de quién va "
+            "la cotización (nombre y apellido, o la empresa) ANTES de llamar cotizar, aunque "
+            "te la pida directo. Es una sola pregunta corta, junto con la confirmación."
+        ),
     ]
     if vendedor["preciosEnChat"]:
         reglas.append(
