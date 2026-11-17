@@ -414,6 +414,24 @@ def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | No
     }
 
 
+def cotizacion_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | None:
+    """La última cotización que ya le llegó al cliente (`cotizacion` del
+    contexto), limpia; None si no viene."""
+    crudo = (context or {}).get("cotizacion")
+    if not isinstance(crudo, dict):
+        return None
+    folio, estado = _texto(crudo.get("folio")), _texto(crudo.get("estado"))
+    if not folio or estado not in ("enviada", "aceptada", "vencida"):
+        return None
+    return {
+        "folio": folio,
+        "estado": estado,
+        "total": _texto(crudo.get("total")),
+        "anticipo": _texto(crudo.get("anticipo")),
+        "resumen": _texto(crudo.get("resumen")),
+    }
+
+
 def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
     propiedades: dict[str, Any] = {
         "items": {

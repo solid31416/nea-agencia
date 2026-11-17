@@ -276,3 +276,47 @@ def test_nombre_valido():
     assert nombre_valido("123") == ""
     assert nombre_valido("Ana") == "Ana"
     assert nombre_valido(" Domos del Norte SA ") == "Domos del Norte SA"
+
+
+def test_cotizacion_del_contexto():
+    from app.tools import cotizacion_del_contexto
+
+    cot = {"folio": "COT-0006", "estado": "enviada", "total": "$504,600.00", "anticipo": "$252,300.00", "resumen": "3 × Domo Modelo Mini"}
+    assert cotizacion_del_contexto({"cotizacion": cot})["folio"] == "COT-0006"
+    assert cotizacion_del_contexto({"cotizacion": {**cot, "estado": "borrador"}}) is None
+    assert cotizacion_del_contexto({}) is None
+
+
+async def test_si_acepto_es_aceptar_la_cotizacion(respx_mock):
+    # La plática del dueño (2026-11-17): «Si acepto» → le ofreció horarios.
+    ctx = _ctx()
+    rutas = mock_crm_basics(respx_mock)
+    contexto = crm_context()
+    contexto["cotizacion"] = {
+        "folio": "COT-0006",
+        "estado": "enviada",
+        "total": "$504,600.00",
+        "anticipo": "$252,300.00",
+        "resumen": "3 × Domo Modelo Mini",
+    }
+    rutas["context"].mock(return_value=httpx.Response(200, json=contexto))
+    ctx.llm.replies = [
+        LlmReply(content=None, tool_calls=[ToolCall(id="h", name="handoff", arguments={"reason": "cotizacion_aceptada"})]),
+        LlmReply(content="¡Gracias! Un asesor te confirma los datos para el anticipo."),
+    ]
+    await _turno(ctx, "Si acepto")
+    sistema = ctx.llm.calls[0]["messages"][0]["content"]
+    assert "Ya le llegó su cotización COT-0006 (3 × Domo Modelo Mini), total $504,600.00" in sistema
+    assert "está ACEPTANDO LA COTIZACIÓN, no pidiendo una cita" in sistema
+    assert "el anticipo de $252,300.00" in sistema
+    assert "NO le ofrezcas horarios de cita" in sistema
+    assert rutas["handoff"].called
+    await ctx.crm.aclose()
+
+
+def test_cotizacion_aceptada_o_vencida():
+    from app.prompt import regla_de_cotizacion_enviada
+
+    base = {"folio": "COT-1", "total": "$1", "anticipo": "", "resumen": ""}
+    assert "YA ACEPTÓ" in regla_de_cotizacion_enviada({**base, "estado": "aceptada"})
+    assert "ya venció" in regla_de_cotizacion_enviada({**base, "estado": "vencida"})

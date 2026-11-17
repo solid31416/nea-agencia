@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import json
 from app.profile import BusinessProfile
 from app.state import Conversation, OfferedSlot
-from app.tools import biblioteca_del_contexto, etapas_siguientes, vendedor_del_contexto
+from app.tools import biblioteca_del_contexto, cotizacion_del_contexto, etapas_siguientes, vendedor_del_contexto
 
 DEFAULT_TZ = ZoneInfo("America/Mexico_City")
 
@@ -476,6 +476,38 @@ def reglas_de_vendedor(vendedor: dict) -> str:
     return "\n".join(reglas)
 
 
+def regla_de_cotizacion_enviada(cot: dict) -> str:
+    """Módulo de la agencia — qué significa su «sí» cuando ya tiene una
+    cotización. El PDF le dice «para apartar, responde SÍ»; sin saberlo, el
+    agente lo tomaba como un sí a una cita y le ofrecía horarios."""
+    datos = cot["folio"] + (f" ({cot['resumen']})" if cot["resumen"] else "") + (f", total {cot['total']}" if cot["total"] else "")
+    if cot["estado"] == "aceptada":
+        return (
+            f"- El cliente YA ACEPTÓ su cotización {datos}. Pagos, anticipo, cuentas y "
+            "fechas de entrega los ve un asesor: si pregunta por eso, dile que un asesor "
+            "le da los datos y llama handoff con razón «cotizacion_aceptada». No le "
+            "ofrezcas horarios de cita por eso."
+        )
+    if cot["estado"] == "vencida":
+        return (
+            f"- Su cotización {datos} ya venció. Si la quiere, dile que hay que "
+            "actualizarla (precios y disponibilidad) y ármale una nueva si puedes "
+            "cotizar; si no, pásalo a un asesor."
+        )
+    anticipo = f" y el anticipo de {cot['anticipo']}" if cot["anticipo"] else ""
+    return (
+        f"- Ya le llegó su cotización {datos}. El PDF le dice que, para apartar, "
+        "responda «SÍ». Si su mensaje acepta esa cotización («sí», «acepto», «la "
+        "quiero», «va», «¿cómo pago?», «¿a qué cuenta deposito?») y tú no le "
+        "acabas de preguntar otra cosa, está ACEPTANDO LA COTIZACIÓN, no pidiendo "
+        "una cita: agradécele, dile que un asesor le confirma los datos de pago"
+        f"{anticipo} para apartar su pedido, y llama handoff con razón "
+        "«cotizacion_aceptada» en ese mismo turno. NO le ofrezcas horarios de cita "
+        "ni llames propose_slots por un «sí» a la cotización. Si es ambiguo, "
+        "pregúntale si acepta la cotización."
+    )
+
+
 def build_system_prompt(
     *,
     profile: BusinessProfile,
@@ -620,6 +652,9 @@ def build_system_prompt(
     vendedor = vendedor_del_contexto(context)
     if vendedor:
         lines.append(reglas_de_vendedor(vendedor))
+    cotizacion = cotizacion_del_contexto(context)
+    if cotizacion:
+        lines.append(regla_de_cotizacion_enviada(cotizacion))
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}
     if filled:
