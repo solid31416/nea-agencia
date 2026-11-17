@@ -299,6 +299,8 @@ async def test_si_acepto_es_aceptar_la_cotizacion(respx_mock):
         "anticipo": "$252,300.00",
         "resumen": "3 × Domo Modelo Mini",
     }
+    # Con precios en el chat, el total y el anticipo van en la regla.
+    contexto["vendedor"] = VENDEDOR
     rutas["context"].mock(return_value=httpx.Response(200, json=contexto))
     ctx.llm.replies = [
         LlmReply(content=None, tool_calls=[ToolCall(id="h", name="handoff", arguments={"reason": "cotizacion_aceptada"})]),
@@ -362,3 +364,17 @@ async def test_flete_por_destino_del_tabulador(respx_mock):
     resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
     assert resultado["flete"] == "incluido ($15,000.00)"
     await ctx.crm.aclose()
+
+
+def test_preguntar_el_anticipo_no_es_aceptar():
+    from app.prompt import regla_de_cotizacion_enviada
+
+    cot = {"folio": "COT-1", "estado": "enviada", "total": "$290,000.00", "anticipo": "$145,000.00", "resumen": "2 × Mini"}
+    con = regla_de_cotizacion_enviada(cot, montos=True)
+    assert "el anticipo es de $145,000.00" in con
+    assert "No llames handoff por una pregunta" in con
+    assert "gracias por tu compra" in con  # ...como lo que NO debe decir
+    sin = regla_de_cotizacion_enviada(cot, montos=False)
+    # Sin precios en el chat no van ni el total ni el anticipo.
+    assert "$" not in sin
+    assert "no digas la cantidad en el chat" in sin

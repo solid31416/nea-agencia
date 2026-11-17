@@ -517,7 +517,7 @@ def reglas_de_vendedor(vendedor: dict) -> str:
     return "\n".join(reglas)
 
 
-def regla_de_cotizacion_enviada(cot: dict) -> str:
+def regla_de_cotizacion_enviada(cot: dict, montos: bool = True) -> str:
     """Módulo de la agencia — qué significa su «sí» cuando ya tiene una
     cotización. El PDF le dice «para apartar, responde SÍ»; sin saberlo, el
     agente lo tomaba como un sí a una cita y le ofrecía horarios."""
@@ -535,17 +535,33 @@ def regla_de_cotizacion_enviada(cot: dict) -> str:
             "actualizarla (precios y disponibilidad) y ármale una nueva si puedes "
             "cotizar; si no, pásalo a un asesor."
         )
-    anticipo = f" y el anticipo de {cot['anticipo']}" if cot["anticipo"] else ""
+    # Sin permiso de decir precios en el chat, tampoco van los montos de la
+    # cotización: el total y el anticipo están en su PDF.
+    if not montos:
+        datos = cot["folio"] + (f" ({cot['resumen']})" if cot["resumen"] else "")
+    anticipo = f" y el anticipo de {cot['anticipo']}" if cot["anticipo"] and montos else ""
+    monto_anticipo = (
+        f"es de {cot['anticipo']}"
+        if cot["anticipo"] and montos
+        else "viene en su cotización (el PDF que le llegó); no digas la cantidad en el chat"
+        if not montos
+        else "lo confirma un asesor"
+    )
     return (
         f"- Ya le llegó su cotización {datos}. El PDF le dice que, para apartar, "
         "responda «SÍ». Si su mensaje acepta esa cotización («sí», «acepto», «la "
-        "quiero», «va», «¿cómo pago?», «¿a qué cuenta deposito?») y tú no le "
-        "acabas de preguntar otra cosa, está ACEPTANDO LA COTIZACIÓN, no pidiendo "
-        "una cita: agradécele, dile que un asesor le confirma los datos de pago"
-        f"{anticipo} para apartar su pedido, y llama handoff con razón "
-        "«cotizacion_aceptada» en ese mismo turno. NO le ofrezcas horarios de cita "
-        "ni llames propose_slots por un «sí» a la cotización. Si es ambiguo, "
-        "pregúntale si acepta la cotización."
+        "quiero», «la aparto», «va», «¿cómo te pago?», «¿a qué cuenta deposito?») "
+        "y tú no le acabas de preguntar otra cosa, está ACEPTANDO LA COTIZACIÓN, no "
+        "pidiendo una cita: agradécele que la acepte, dile que un asesor le confirma "
+        f"los datos de pago{anticipo} para apartar su pedido, y llama handoff con "
+        "razón «cotizacion_aceptada» en ese mismo turno. No digas «gracias por tu "
+        "compra»: la compra se cierra con el anticipo. NO le ofrezcas horarios de "
+        "cita ni llames propose_slots por un «sí» a la cotización.\n"
+        "  Si solo PREGUNTA algo de la cotización sin decir que la acepta (cuánto es "
+        "el anticipo, qué incluye, cuánto dura la vigencia), eso todavía no es "
+        f"aceptarla: contéstale (el anticipo {monto_anticipo}) y pregúntale si quiere "
+        "apartarla. No llames handoff por una pregunta. Si es ambiguo, pregúntale si "
+        "acepta la cotización."
     )
 
 
@@ -696,7 +712,9 @@ def build_system_prompt(
         lines.append(reglas_de_vendedor(vendedor))
     cotizacion = cotizacion_del_contexto(context)
     if cotizacion:
-        lines.append(regla_de_cotizacion_enviada(cotizacion))
+        lines.append(
+            regla_de_cotizacion_enviada(cotizacion, montos=bool(vendedor and vendedor["preciosEnChat"]))
+        )
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}
     if filled:
