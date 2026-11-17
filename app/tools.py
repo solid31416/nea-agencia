@@ -382,6 +382,14 @@ def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | No
     puede_extras = crudo.get("puedeCotizarExtras") is True
     if not puede_extras:
         productos = [p for p in productos if not p["extra"]]
+    # Fletes: los destinos con tarifa en el tabulador del CRM (sin precios).
+    fletes = crudo.get("fletes") if puede_extras else None
+    destinos = [
+        d.strip() for d in ((fletes or {}).get("destinos") or []) if isinstance(d, str) and d.strip()
+    ] if isinstance(fletes, dict) else []
+    if destinos:
+        # El flete lo pone el tabulador; el «flete» genérico del catálogo saldría doble.
+        productos = [p for p in productos if not (p["extra"] and "flete" in p["nombre"].lower())]
     descuento = crudo.get("descuentoMaxPct")
     piezas = crudo.get("piezasMax")
     pendiente = crudo.get("pendiente")
@@ -401,6 +409,7 @@ def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | No
         "anticipoPct": anticipo if isinstance(anticipo, (int, float)) and not isinstance(anticipo, bool) else None,
         "productos": productos,
         "puedeCotizarExtras": puede_extras,
+        "destinosFlete": destinos,
         "descuentoMaxPct": descuento
         if isinstance(descuento, (int, float)) and not isinstance(descuento, bool) and descuento > 0
         else 0,
@@ -462,6 +471,15 @@ def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
             ),
         },
     }
+    if vendedor.get("destinosFlete"):
+        propiedades["destino_estado"] = {
+            "type": "string",
+            "description": "Estado de México a donde va el pedido (para el flete), si el cliente lo dijo",
+        }
+        propiedades["destino_ciudad"] = {
+            "type": "string",
+            "description": "Ciudad o municipio a donde va, si el cliente lo dijo",
+        }
     if vendedor["descuentoMaxPct"] > 0:
         propiedades["descuento_pct"] = {
             "type": "number",
@@ -903,7 +921,13 @@ class ToolRuntime:
         if not callable(cotizar):
             return sin_permiso
         try:
-            respuesta = await cotizar(self._crm_conv_id, items, cliente, descuento)
+            estado_destino = str(args.get("destino_estado") or "").strip()
+            destino = (
+                {"estado": estado_destino, "ciudad": str(args.get("destino_ciudad") or "").strip()}
+                if estado_destino and self.vendedor.get("destinosFlete")
+                else None
+            )
+            respuesta = await cotizar(self._crm_conv_id, items, cliente, descuento, destino)
         except CrmConflict as exc:
             error = exc.payload.get("error")
             detalle = error.get("message") if isinstance(error, dict) else None
@@ -938,6 +962,16 @@ class ToolRuntime:
             "anticipo": data.get("anticipo"),
             "resumen": data.get("resumen"),
         }
+        flete = data.get("flete")
+        if flete == "incluido":
+            resultado["flete"] = f"incluido ({data.get('fleteMonto')})" if data.get("fleteMonto") else "incluido"
+        elif flete == "sin_tarifa":
+            resultado["flete"] = (
+                "no hay tarifa para ese destino: la cotización va sin flete; dile que el flete "
+                "se lo confirma un asesor"
+            )
+        elif self.vendedor.get("destinosFlete") and flete == "sin_destino":
+            resultado["flete"] = "va sin flete porque no mandaste destino; dile que el flete se suma según su ciudad"
         if enviada:
             resultado["nota"] = (
                 "el PDF ya le llegó al cliente por WhatsApp; acompáñalo con tu texto y "

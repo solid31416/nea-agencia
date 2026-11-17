@@ -313,6 +313,7 @@ class CrmClient:
         items: list[dict[str, Any]],
         cliente: str = "",
         descuento_pct: float = 0,
+        destino: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Módulo de la agencia — el agente arma una cotización
         (`POST /api/bot/cotizacion`). Solo productos y cantidades: los precios
@@ -326,6 +327,7 @@ class CrmClient:
                 "items": items,
                 "cliente": cliente,
                 "descuentoPct": descuento_pct,
+                **({"destino": destino} if destino else {}),
             },
             # Arma el PDF y, en modo «la manda sola», lo sube a Meta.
             timeout=90.0,

@@ -441,7 +441,17 @@ def reglas_de_vendedor(vendedor: dict) -> str:
         )
     else:
         reglas.append("  No ofrezcas ni prometas descuentos: si lo pide, dile que eso lo ve un asesor.")
-    if vendedor["puedeCotizarExtras"]:
+    if vendedor.get("destinosFlete"):
+        reglas.append(
+            "  Flete: lo calcula el sistema con la tarifa según a dónde va y cuántas piezas. "
+            "Pregúntale a qué ciudad y estado va (si no lo dijo) y mándalo en destino_estado y "
+            "destino_ciudad de cotizar. NUNCA digas un costo de flete por tu cuenta. Hay "
+            "tarifa para: " + "; ".join(vendedor["destinosFlete"][:40]) + ". Si su destino no "
+            "está, cotiza igual y dile que el flete se lo confirma un asesor."
+        )
+        if any(p["extra"] for p in vendedor["productos"]):
+            reglas.append("  Los otros extras (instalación…) de la lista los puedes incluir si los necesita.")
+    elif vendedor["puedeCotizarExtras"]:
         reglas.append("  Los extras (flete, instalación) de la lista los puedes incluir si el cliente los necesita.")
     else:
         reglas.append(

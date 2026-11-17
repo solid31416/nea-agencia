@@ -320,3 +320,45 @@ def test_cotizacion_aceptada_o_vencida():
     base = {"folio": "COT-1", "total": "$1", "anticipo": "", "resumen": ""}
     assert "YA ACEPTÓ" in regla_de_cotizacion_enviada({**base, "estado": "aceptada"})
     assert "ya venció" in regla_de_cotizacion_enviada({**base, "estado": "vencida"})
+
+
+async def test_flete_por_destino_del_tabulador(respx_mock):
+    ctx = _ctx()
+    rutas = mock_crm_basics(respx_mock)
+    contexto = crm_context()
+    contexto["vendedor"] = {**VENDEDOR, "puedeCotizarExtras": True, "fletes": {"destinos": ["Allende, Nuevo León", "Todo Jalisco"]}}
+    contexto["contact"]["ficha"] = {"nombre": "Saúl Garza"}
+    rutas["context"].mock(return_value=httpx.Response(200, json=contexto))
+    cot = respx_mock.post(f"{CRM_URL}/api/bot/cotizacion").mock(
+        return_value=httpx.Response(
+            200,
+            json={"estado": "por_aprobar", "folio": "COT-0009", "total": "$305,000.00", "flete": "incluido", "fleteMonto": "$15,000.00"},
+        )
+    )
+    ctx.llm.replies = [
+        LlmReply(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c",
+                    name="cotizar",
+                    arguments={"items": [{"producto_id": "mini", "cantidad": 2}], "destino_estado": "Nuevo León", "destino_ciudad": "Allende"},
+                )
+            ],
+        ),
+        LlmReply(content="Listo, un asesor te la manda en breve."),
+    ]
+    await _turno(ctx, "Cotízame 2 mini con envío a Allende NL")
+    primera = ctx.llm.calls[0]
+    herramienta = next(t for t in primera["tools"] if t["function"]["name"] == "cotizar")
+    props = herramienta["function"]["parameters"]["properties"]
+    assert "destino_estado" in props and "destino_ciudad" in props
+    # El flete genérico del catálogo ya no se ofrece: lo pone el tabulador.
+    assert props["items"]["items"]["properties"]["producto_id"]["enum"] == ["mini"]
+    sistema = primera["messages"][0]["content"]
+    assert "Hay tarifa para: Allende, Nuevo León; Todo Jalisco" in sistema
+    assert "NUNCA digas un costo de flete por tu cuenta" in sistema
+    assert json.loads(cot.calls[0].request.content)["destino"] == {"estado": "Nuevo León", "ciudad": "Allende"}
+    resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
+    assert resultado["flete"] == "incluido ($15,000.00)"
+    await ctx.crm.aclose()
