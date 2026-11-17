@@ -390,6 +390,37 @@ def _linea_cerrada(cerrada: dict) -> str:
     return f"- Su cita del {label} ya no está vigente."
 
 
+def _sin_acentos(texto: str) -> str:
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn"
+    )
+
+
+def criterios_de_etapa(siguientes: list[str]) -> list[str]:
+    """Módulo de la agencia — cuándo SÍ va cada etapa del embudo de venta consultiva.
+
+    «Calificado» no es «dijo hola y preguntó precio»: es cuando ya se sabe
+    para qué lo quiere, dónde va y cuántas piezas. Las etapas de cita se
+    mueven solas al agendar; la IA no las toca.
+    """
+    out: list[str] = []
+    for nombre in siguientes:
+        n = _sin_acentos(nombre)
+        if "calific" in n:
+            out.append(
+                f"- A «{nombre}» muévelo SOLO cuando ya sepas tres cosas: para qué lo "
+                "quiere (el uso: casa, glamping, oficina, bodega…), dónde lo va a "
+                "instalar (ciudad o estado) y cuántas piezas. Si falta una, todavía no."
+            )
+        elif any(p in n for p in ("cita", "visita", "videollamada", "llamada", "demo", "reunion")):
+            out.append(
+                f"- A «{nombre}» no lo muevas tú: pasa sola cuando se agenda la cita."
+            )
+    return out
+
+
 def reglas_de_vendedor(vendedor: dict) -> str:
     """Módulo de la agencia — el catálogo con precios y los límites que el
     dueño puso en Ajustes → Ventas → Vendedor. El agente nunca escribe un
@@ -632,6 +663,7 @@ def build_system_prompt(
             "por un saludo, un «ok» o una duda suelta sin intención, ni a una "
             "etapa que ya pasó. Es interno: jamás se lo anuncies."
         )
+        lines.extend(criterios_de_etapa(siguientes))
     # Módulo de la agencia — la Biblioteca: qué puede mandar y cuándo. Sin
     # «cuándo» concreto los modelos o no mandan nada o mandan todo de golpe.
     archivos = biblioteca_del_contexto(context)
