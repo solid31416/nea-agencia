@@ -336,6 +336,128 @@ def con_biblioteca(schemas: list[dict[str, Any]], archivos: list[dict[str, Any]]
     return schemas + [send_media_schema(archivos)] if archivos else schemas
 
 
+# Módulo de la agencia — «Vendedor» (Ajustes → Ventas → Vendedor del CRM).
+# Como send_media, no va en TOOL_SCHEMAS: existe solo cuando el contexto trae
+# `vendedor` (el dueño lo encendió y hay productos con precio). El modelo
+# NUNCA manda precios: elige productos del catálogo y cantidades, y el CRM
+# pone los precios de la lista y revisa los límites del dueño.
+MAX_PARTIDAS_COTIZACION = 20
+
+
+def _texto(valor: Any) -> str:
+    return valor.strip() if isinstance(valor, str) else ""
+
+
+def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | None:
+    """El `vendedor` del contexto, limpio; None si no viene o no sirve."""
+    crudo = (context or {}).get("vendedor")
+    if not isinstance(crudo, dict):
+        return None
+    productos: list[dict[str, Any]] = []
+    for p in crudo.get("productos") or []:
+        if not isinstance(p, dict):
+            continue
+        ident, nombre = _texto(p.get("id")), _texto(p.get("nombre"))
+        if not (ident and nombre):
+            continue
+        productos.append(
+            {
+                "id": ident,
+                "nombre": nombre,
+                "precio": _texto(p.get("precio")),
+                "unidad": _texto(p.get("unidad")),
+                "descripcion": _texto(p.get("descripcion")),
+                "extra": p.get("extra") is True,
+            }
+        )
+    if not any(not p["extra"] for p in productos):
+        return None
+    puede_extras = crudo.get("puedeCotizarExtras") is True
+    if not puede_extras:
+        productos = [p for p in productos if not p["extra"]]
+    descuento = crudo.get("descuentoMaxPct")
+    piezas = crudo.get("piezasMax")
+    pendiente = crudo.get("pendiente")
+    anticipo = crudo.get("anticipoPct")
+    return {
+        "preciosEnChat": crudo.get("preciosEnChat") is not False,
+        "modoEnvio": "sola" if crudo.get("modoEnvio") == "sola" else "aprobar",
+        "moneda": _texto(crudo.get("moneda")) or "MXN",
+        "iva": _texto(crudo.get("iva")),
+        "anticipoPct": anticipo if isinstance(anticipo, (int, float)) and not isinstance(anticipo, bool) else None,
+        "productos": productos,
+        "puedeCotizarExtras": puede_extras,
+        "descuentoMaxPct": descuento
+        if isinstance(descuento, (int, float)) and not isinstance(descuento, bool) and descuento > 0
+        else 0,
+        "topeMonto": _texto(crudo.get("topeMonto")) or None,
+        "piezasMax": piezas if isinstance(piezas, int) and not isinstance(piezas, bool) and piezas > 0 else None,
+        "pendiente": (
+            {"folio": _texto(pendiente.get("folio")), "total": _texto(pendiente.get("total"))}
+            if isinstance(pendiente, dict) and _texto(pendiente.get("folio"))
+            else None
+        ),
+    }
+
+
+def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
+    propiedades: dict[str, Any] = {
+        "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_PARTIDAS_COTIZACION,
+            "description": "Qué productos del catálogo y cuántos de cada uno",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "producto_id": {
+                        "type": "string",
+                        "enum": [p["id"] for p in vendedor["productos"]],
+                        "description": "El id del producto, tal cual aparece en el catálogo del contexto",
+                    },
+                    "cantidad": {"type": "integer", "minimum": 1, "description": "Cuántas piezas"},
+                },
+                "required": ["producto_id", "cantidad"],
+            },
+        },
+        "a_nombre_de": {
+            "type": "string",
+            "description": "A nombre de quién va (persona o empresa), si el cliente lo dijo; si no, vacío",
+        },
+    }
+    if vendedor["descuentoMaxPct"] > 0:
+        propiedades["descuento_pct"] = {
+            "type": "number",
+            "minimum": 0,
+            "maximum": vendedor["descuentoMaxPct"],
+            "description": "Descuento en %, SOLO si el cliente lo pidió y se lo ofreciste; si no, 0",
+        }
+    envio = (
+        "La cotización en PDF le llega al cliente por WhatsApp en cuanto respondas"
+        if vendedor["modoEnvio"] == "sola"
+        else "La cotización queda lista para que un asesor la revise y se la mande"
+    )
+    return {
+        "type": "function",
+        "function": {
+            "name": "cotizar",
+            "description": (
+                "Arma la cotización formal (PDF) con los precios de lista del catálogo. "
+                "Llámala SOLO cuando el cliente ya confirmó qué modelo(s) y cuántos "
+                "quiere y te dijo que sí quiere su cotización. Tú NO pones precios: "
+                f"el sistema los pone. {envio}. Una por turno. Nunca digas que la "
+                "cotización está lista o enviada si esta herramienta no respondió ok."
+            ),
+            "parameters": {"type": "object", "properties": propiedades, "required": ["items"]},
+        },
+    }
+
+
+def con_vendedor(schemas: list[dict[str, Any]], vendedor: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """El catálogo del turno más `cotizar` si el CRM lo permite."""
+    return schemas + [cotizar_schema(vendedor)] if vendedor else schemas
+
+
 # Recordatorios de la cita: SOLO los manda la agenda v2 de Vocero Cloud. El
 # CRM raíz no tiene recordatorios, y con este campo obligatorio en su
 # book_session el modelo, para llenarlo, le preguntaba al lead «¿te mando un
@@ -372,6 +494,10 @@ CLAVE_DE_HERRAMIENTA = {
     "route_out": "salida",
     "handoff": "escalar",
     "send_media": "biblioteca",
+    # El interruptor de cotizar vive en Ajustes → Ventas → Vendedor: si está
+    # apagado el contexto no trae `vendedor` y la herramienta ni existe. No
+    # depende del catálogo de herramientas del perfil.
+    "cotizar": "escalar",
 }
 
 
@@ -559,6 +685,7 @@ class ToolRuntime:
         conversacion_reciente: str | None = None,
         etapas: list[str] | None = None,
         biblioteca: list[dict[str, Any]] | None = None,
+        vendedor: dict[str, Any] | None = None,
     ) -> None:
         self._ctx = ctx
         # 038 — A qué etapas puede mover al lead (`lead.nextStages`).
@@ -566,6 +693,9 @@ class ToolRuntime:
         # Módulo de la agencia — qué archivos de la biblioteca puede mandar.
         self.biblioteca: list[dict[str, Any]] = list(biblioteca or [])
         self.archivos_enviados: list[str] = []
+        # Módulo de la agencia — si puede cotizar, con qué catálogo y reglas.
+        self.vendedor: dict[str, Any] | None = vendedor
+        self.cotizacion: dict[str, Any] | None = None
         # Lo último que se dijo en la conversación (app/dias.py). None ⇒ no
         # se sabe, y la fecha del modelo pasa sin revisar.
         self._conversacion_reciente = conversacion_reciente
@@ -599,6 +729,8 @@ class ToolRuntime:
                 return await self._move_stage(args)
             if name == "send_media":
                 return await self._send_media(args)
+            if name == "cotizar":
+                return await self._cotizar(args)
             if name == "propose_slots":
                 return await self._propose_slots(args)
             if name == "book_session":
@@ -682,6 +814,81 @@ class ToolRuntime:
                     f"solo le llegaron {enviados} de {total}; no digas que le mandaste todas, "
                     "y ofrécele pasarlo con una persona si quiere ver las demás"
                 )
+        return resultado
+
+    async def _cotizar(self, args: dict[str, Any]) -> dict[str, Any]:
+        sin_permiso = {"ok": False, "error": "sin_vendedor", "detalle": "no puedes cotizar; ofrece pasarlo con un asesor"}
+        if not self.vendedor:
+            return sin_permiso
+        if self.cotizacion is not None:
+            return {"ok": False, "error": "ya_cotizaste", "detalle": "ya armaste la cotización en este turno"}
+        por_id = {p["id"]: p for p in self.vendedor["productos"]}
+        items: list[dict[str, Any]] = []
+        for it in args.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            ident = str(it.get("producto_id") or it.get("productoId") or "").strip()
+            cantidad = it.get("cantidad")
+            if isinstance(cantidad, float) and cantidad.is_integer():
+                cantidad = int(cantidad)
+            if ident not in por_id:
+                return {
+                    "ok": False,
+                    "error": "producto_desconocido",
+                    "detalle": f"«{ident}» no está en el catálogo",
+                    "productos": [{"id": p["id"], "nombre": p["nombre"]} for p in self.vendedor["productos"]],
+                }
+            if not isinstance(cantidad, int) or isinstance(cantidad, bool) or cantidad < 1:
+                return {"ok": False, "error": "cantidad_invalida", "detalle": "la cantidad va en piezas enteras, 1 o más"}
+            items.append({"productoId": ident, "cantidad": cantidad})
+        if not items:
+            return {"ok": False, "error": "sin_productos", "detalle": "pregúntale qué modelo y cuántos quiere"}
+        descuento = args.get("descuento_pct") or 0
+        if not isinstance(descuento, (int, float)) or isinstance(descuento, bool) or descuento < 0:
+            descuento = 0
+        cotizar = getattr(self._ctx.crm, "send_quote", None)
+        if not callable(cotizar):
+            return sin_permiso
+        try:
+            respuesta = await cotizar(self._crm_conv_id, items, str(args.get("a_nombre_de") or "").strip(), descuento)
+        except CrmConflict as exc:
+            error = exc.payload.get("error")
+            detalle = error.get("message") if isinstance(error, dict) else None
+            if exc.payload.get("paraPersona") is True:
+                # Rebasa lo que el dueño le dejó cotizar: la sigue una persona.
+                self.handoff_reason = "cotizacion"
+                return {
+                    "ok": False,
+                    "error": exc.code,
+                    "detalle": detalle or "esta cotización la hace un asesor",
+                    "nota": (
+                        "esta cotización la prepara un asesor: dile al cliente, con calidez, que un "
+                        "asesor le manda su cotización en breve. No le des precios ni totales nuevos "
+                        "ni el motivo interno. El pase al asesor ya quedó hecho."
+                    ),
+                }
+            return {"ok": False, "error": exc.code, "detalle": detalle or "no se armó la cotización"}
+        data = respuesta if isinstance(respuesta, dict) else {}
+        self.cotizacion = data
+        enviada = data.get("estado") == "enviada"
+        resultado: dict[str, Any] = {
+            "ok": True,
+            "estado": "enviada" if enviada else "por_aprobar",
+            "folio": data.get("folio"),
+            "total": data.get("total"),
+            "anticipo": data.get("anticipo"),
+            "resumen": data.get("resumen"),
+        }
+        if enviada:
+            resultado["nota"] = (
+                "el PDF ya le llegó al cliente por WhatsApp; acompáñalo con tu texto y "
+                "pregúntale si tiene dudas o si quiere apartar"
+            )
+        else:
+            resultado["nota"] = (
+                "un asesor la revisa y se la manda en breve: díselo así. NO digas que ya se la "
+                "mandaste ni le des el total todavía"
+            )
         return resultado
 
     async def _propose_slots(self, args: dict[str, Any]) -> dict[str, Any]:

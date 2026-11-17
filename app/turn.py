@@ -38,6 +38,8 @@ from app.tools import (
     ToolRuntime,
     biblioteca_del_contexto,
     con_biblioteca,
+    con_vendedor,
+    vendedor_del_contexto,
     con_mover_etapa,
     etapas_siguientes,
     solo_encendidas,
@@ -462,6 +464,7 @@ async def run_turn(
         conversacion_reciente=_conversacion_reciente(history),
         etapas=etapas_siguientes(context),
         biblioteca=biblioteca_del_contexto(context),
+        vendedor=vendedor_del_contexto(context),
     )
     try:
         final_text = await _tool_loop(ctx, messages, runtime)
@@ -743,16 +746,19 @@ async def _tool_loop(
         reply = await ctx.llm.complete(
             messages,
             tools=solo_encendidas(
-                con_biblioteca(
-                    con_mover_etapa(
-                        tool_schemas(
-                            ctx.agenda_enabled,
-                            bool(getattr(ctx.crm, "supports_agenda_v2", False)),
-                            bool(getattr(ctx.crm, "supports_coordination", False)),
+                con_vendedor(
+                    con_biblioteca(
+                        con_mover_etapa(
+                            tool_schemas(
+                                ctx.agenda_enabled,
+                                bool(getattr(ctx.crm, "supports_agenda_v2", False)),
+                                bool(getattr(ctx.crm, "supports_coordination", False)),
+                            ),
+                            getattr(runtime, "etapas", []),
                         ),
-                        getattr(runtime, "etapas", []),
+                        getattr(runtime, "biblioteca", []),
                     ),
-                    getattr(runtime, "biblioteca", []),
+                    getattr(runtime, "vendedor", None),
                 ),
                 getattr(runtime, "_profile", None),
             ),

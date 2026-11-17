@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import json
 from app.profile import BusinessProfile
 from app.state import Conversation, OfferedSlot
-from app.tools import biblioteca_del_contexto, etapas_siguientes
+from app.tools import biblioteca_del_contexto, etapas_siguientes, vendedor_del_contexto
 
 DEFAULT_TZ = ZoneInfo("America/Mexico_City")
 
@@ -390,6 +390,83 @@ def _linea_cerrada(cerrada: dict) -> str:
     return f"- Su cita del {label} ya no está vigente."
 
 
+def reglas_de_vendedor(vendedor: dict) -> str:
+    """Módulo de la agencia — el catálogo con precios y los límites que el
+    dueño puso en Ajustes → Ventas → Vendedor. El agente nunca escribe un
+    precio que no esté aquí: la cotización la calcula el CRM."""
+    productos = [
+        f"  · {p['id']} — {p['nombre']}"
+        + (f": {p['precio']}" if p["precio"] else "")
+        + (f" por {p['unidad']}" if p["unidad"] else "")
+        + (" (extra)" if p["extra"] else "")
+        + (f". {p['descripcion']}" if p["descripcion"] else "")
+        for p in vendedor["productos"]
+    ]
+    reglas = [
+        "- Vendedor: puedes armar la cotización formal (PDF) con la herramienta "
+        "cotizar. Catálogo con precios de lista"
+        + (f" ({vendedor['iva']})" if vendedor["iva"] else "")
+        + ":\n"
+        + "\n".join(productos),
+        "  Antes de cotizar, confirma con el cliente qué modelo(s) y cuántos, y "
+        "pregúntale si quiere su cotización; llama cotizar cuando diga que sí. Tú "
+        "eliges productos y cantidades; los precios y el total los pone el sistema.",
+    ]
+    if vendedor["preciosEnChat"]:
+        reglas.append(
+            "  Puedes decir en el chat los precios de lista de arriba, tal cual. NUNCA "
+            "digas un precio, total, rebaja o promoción que no venga de esta lista o de "
+            "la respuesta de cotizar, aunque el cliente insista o diga que otro le "
+            "cobra menos."
+        )
+    else:
+        reglas.append(
+            "  NO digas precios en el chat: el precio va en la cotización. Si te lo "
+            "pregunta, ofrécele armarle su cotización formal."
+        )
+    if vendedor["descuentoMaxPct"] > 0:
+        reglas.append(
+            f"  Descuento: solo si el cliente lo pide, puedes ofrecer hasta "
+            f"{vendedor['descuentoMaxPct']:g}% y va en descuento_pct de cotizar. Más que "
+            "eso lo decide un asesor."
+        )
+    else:
+        reglas.append("  No ofrezcas ni prometas descuentos: si lo pide, dile que eso lo ve un asesor.")
+    if vendedor["puedeCotizarExtras"]:
+        reglas.append("  Los extras (flete, instalación) de la lista los puedes incluir si el cliente los necesita.")
+    else:
+        reglas.append(
+            "  El flete y los extras NO los cotizas: dile que ese costo se lo confirma un "
+            "asesor según su ciudad."
+        )
+    limites = []
+    if vendedor["piezasMax"]:
+        limites.append(f"más de {vendedor['piezasMax']} piezas")
+    if vendedor["topeMonto"]:
+        limites.append(f"un total arriba de {vendedor['topeMonto']}")
+    if limites:
+        reglas.append(
+            f"  Una cotización de {' o '.join(limites)} la prepara un asesor: si cotizar "
+            "te lo dice, avísale al cliente con calidez que un asesor se la manda en breve."
+        )
+    if vendedor["modoEnvio"] == "sola":
+        reglas.append(
+            "  Cuando cotizar responde ok, el PDF ya le llegó al cliente: acompáñalo con "
+            "tu texto y pregúntale si tiene dudas."
+        )
+    else:
+        reglas.append(
+            "  Cuando cotizar responde ok, la cotización queda para que un asesor la "
+            "revise y se la mande en breve: díselo así, sin decir que ya se la mandaste."
+        )
+    if vendedor["pendiente"]:
+        reglas.append(
+            f"  Ya hay una cotización suya ({vendedor['pendiente']['folio']}) esperando "
+            "que un asesor la revise: no armes otra salvo que cambie lo que quiere."
+        )
+    return "\n".join(reglas)
+
+
 def build_system_prompt(
     *,
     profile: BusinessProfile,
@@ -530,6 +607,10 @@ def build_system_prompt(
             "con una persona.\n"
             + "\n".join(lineas_bib)
         )
+    # Módulo de la agencia — el agente como vendedor (Ajustes → Ventas → Vendedor).
+    vendedor = vendedor_del_contexto(context)
+    if vendedor:
+        lines.append(reglas_de_vendedor(vendedor))
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}
     if filled:

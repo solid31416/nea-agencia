@@ -307,6 +307,36 @@ class CrmClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def send_quote(
+        self,
+        conversation_id: str,
+        items: list[dict[str, Any]],
+        cliente: str = "",
+        descuento_pct: float = 0,
+    ) -> dict[str, Any]:
+        """Módulo de la agencia — el agente arma una cotización
+        (`POST /api/bot/cotizacion`). Solo productos y cantidades: los precios
+        los pone el CRM. Los 404/409/410/422 suben como `CrmConflict` con el
+        sobre de error y `paraPersona` (true: la sigue una persona)."""
+        resp = await self._request(
+            "POST",
+            "/api/bot/cotizacion",
+            json={
+                "conversationId": conversation_id,
+                "items": items,
+                "cliente": cliente,
+                "descuentoPct": descuento_pct,
+            },
+            # Arma el PDF y, en modo «la manda sola», lo sube a Meta.
+            timeout=90.0,
+        )
+        if resp.status_code in (404, 409, 410, 422):
+            raise CrmConflict(_conflict_code(resp), _payload(resp))
+        if resp.status_code != 200:
+            raise CrmError(f"cotizacion devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
     async def post_handoff(self, conversation_id: str, reason: str | None = None) -> None:
         resp = await self._request(
             "POST",
