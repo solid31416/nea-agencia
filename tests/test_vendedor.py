@@ -378,3 +378,43 @@ def test_preguntar_el_anticipo_no_es_aceptar():
     # Sin precios en el chat no van ni el total ni el anticipo.
     assert "$" not in sin
     assert "no digas la cantidad en el chat" in sin
+
+
+def test_empresa_y_persona():
+    from app.tools import empresa_y_persona, separar_empresa
+
+    assert empresa_y_persona("Domos Garza", "Saúl") == "Domos Garza (Saúl)"
+    assert empresa_y_persona("", "Saúl Garza") == "Saúl Garza"
+    assert empresa_y_persona("Domos Garza", "") == "Domos Garza"
+    assert empresa_y_persona("Domos Garza", "Domos Garza (Saúl)") == "Domos Garza (Saúl)"
+    assert separar_empresa("Casas y Cabañas (Perla)") == ("Casas y Cabañas", "Perla")
+    assert separar_empresa("Laura Martínez") == ("Laura Martínez", "")
+    # La ficha con los dos: así se cotiza sin volver a preguntar.
+    v = vendedor_del_contexto({"vendedor": VENDEDOR, "contact": {"ficha": {"nombre": "Saúl", "empresa": "Domos Garza"}}})
+    assert v["clienteConocido"] == "Domos Garza (Saúl)"
+
+
+async def test_cotizar_a_nombre_de_una_empresa(respx_mock):
+    ctx = _ctx()
+    rutas = _con_vendedor(respx_mock)
+    cot = respx_mock.post(f"{CRM_URL}/api/bot/cotizacion").mock(
+        return_value=httpx.Response(200, json={"estado": "enviada", "folio": "COT-0010", "total": "$145,000.00"})
+    )
+    ctx.llm.replies = [
+        LlmReply(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c",
+                    name="cotizar",
+                    arguments={"items": [{"producto_id": "mini", "cantidad": 1}], "a_nombre_de": "Domos Garza", "persona": "Saúl"},
+                )
+            ],
+        ),
+        LlmReply(content="Listo, Saúl."),
+    ]
+    await _turno(ctx, "Soy Saúl de Domos Garza, cotízame 1 mini")
+    assert json.loads(cot.calls[0].request.content)["cliente"] == "Domos Garza (Saúl)"
+    fichas = [json.loads(c.request.content)["ficha"] for c in rutas["ficha"].calls]
+    assert {"empresa": "Domos Garza", "nombre": "Saúl"} in fichas
+    await ctx.crm.aclose()

@@ -355,6 +355,22 @@ def nombre_valido(valor: Any) -> str:
     return texto if len(re.sub(r"[^\w]|[\d_]", "", texto)) >= 3 else ""
 
 
+def empresa_y_persona(empresa: str, persona: str) -> str:
+    """Módulo de la agencia — como lo quiere ver el dueño: «Domos Garza (Saúl)».
+    Si falta una, la otra; si son la misma o ya viene armado, una sola vez."""
+    if not empresa:
+        return persona
+    if not persona or persona.lower() == empresa.lower() or empresa.lower() in persona.lower():
+        return persona or empresa
+    return f"{empresa} ({persona})"
+
+
+def separar_empresa(texto: str) -> tuple[str, str]:
+    """«Domos Garza (Saúl)» → («Domos Garza», «Saúl»); si no trae paréntesis, (texto, "")."""
+    m = re.match(r"^\s*(.+?)\s*\(([^()]+)\)\s*$", texto or "")
+    return (m.group(1), m.group(2).strip()) if m else (texto, "")
+
+
 def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | None:
     """El `vendedor` del contexto, limpio; None si no viene o no sirve."""
     crudo = (context or {}).get("vendedor")
@@ -397,9 +413,9 @@ def vendedor_del_contexto(context: dict[str, Any] | None) -> dict[str, Any] | No
     # A nombre de quién va: solo lo que el cliente DIJO (la ficha), nunca el
     # nombre de su perfil de WhatsApp, que muchas veces es «J» o un apodo.
     ficha = ((context or {}).get("contact") or {}).get("ficha") or {}
-    cliente = nombre_valido(ficha.get("nombre")) if isinstance(ficha, dict) else ""
-    if not cliente and isinstance(ficha, dict):
-        cliente = nombre_valido(ficha.get("empresa"))
+    cliente = ""
+    if isinstance(ficha, dict):
+        cliente = empresa_y_persona(nombre_valido(ficha.get("empresa")), nombre_valido(ficha.get("nombre")))
     return {
         "clienteConocido": cliente,
         "preciosEnChat": crudo.get("preciosEnChat") is not False,
@@ -466,10 +482,18 @@ def cotizar_schema(vendedor: dict[str, Any]) -> dict[str, Any]:
             "description": (
                 "A nombre de quién va: nombre y apellido de la persona, o la empresa, tal "
                 "como el cliente te lo DIJO en esta plática. Nunca el de su perfil de "
-                "WhatsApp ni uno inventado"
+                "WhatsApp ni uno inventado. Si habla por un negocio («soy Saúl de Domos "
+                "Garza»), aquí va SOLO la empresa («Domos Garza») y su nombre va en persona"
                 + (f". Si no lo cambió, «{vendedor['clienteConocido']}»" if vendedor["clienteConocido"] else "")
             ),
         },
+    }
+    propiedades["persona"] = {
+        "type": "string",
+        "description": (
+            "Solo si la cotización va a nombre de una empresa: el nombre de la persona "
+            "que te escribe, como lo dijo («Saúl»). Queda «Domos Garza (Saúl)»"
+        ),
     }
     if vendedor.get("destinosFlete"):
         propiedades["destino_estado"] = {
@@ -903,7 +927,12 @@ class ToolRuntime:
         if not items:
             return {"ok": False, "error": "sin_productos", "detalle": "pregúntale qué modelo y cuántos quiere"}
         # Sin nombre real no se cotiza: el PDF saldría a nombre de «J».
-        dicho = nombre_valido(args.get("a_nombre_de"))
+        empresa_dicha, persona_dicha = separar_empresa(_texto(args.get("a_nombre_de")))
+        dicho = nombre_valido(empresa_dicha)
+        persona = nombre_valido(args.get("persona")) or nombre_valido(persona_dicha)
+        if dicho and persona:
+            # Habla por un negocio: «Domos Garza (Saúl)».
+            dicho = empresa_y_persona(dicho, persona)
         cliente = dicho or self.vendedor.get("clienteConocido") or ""
         if not cliente:
             return {
@@ -950,7 +979,12 @@ class ToolRuntime:
         if dicho and dicho != self.vendedor.get("clienteConocido"):
             # Que el nombre quede en la ficha (y, con NOMBRE_REAL, en el contacto).
             try:
-                await self._ctx.crm.put_ficha(self._crm_conv_id, {"nombre": dicho})
+                ficha_nombre = (
+                    {"empresa": nombre_valido(empresa_dicha), "nombre": persona}
+                    if persona and dicho != persona
+                    else {"nombre": dicho}
+                )
+                await self._ctx.crm.put_ficha(self._crm_conv_id, ficha_nombre)
             except CrmError as exc:
                 logger.warning("tools: no pude guardar el nombre de la cotización: %s", exc)
         enviada = data.get("estado") == "enviada"
