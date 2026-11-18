@@ -1006,10 +1006,24 @@ class ToolRuntime:
             )
         elif self.vendedor.get("destinosFlete") and flete == "sin_destino":
             resultado["flete"] = "va sin flete porque no mandaste destino; dile que el flete se suma según su ciudad"
-        if enviada:
+        if enviada and data.get("repetida") is True:
+            # El CRM no armó otra: era la misma que ya tenía (no se gastó folio).
+            resultado["repetida"] = True
+            resultado["nota"] = (
+                f"es la MISMA cotización {data.get('folio')} que ya le llegó; no se armó otra ni "
+                "se volvió a mandar. Dile que ya se la mandaste hace un momento por este chat "
+                "y pregúntale si tiene dudas o si quiere apartar. No digas que le mandaste una nueva"
+            )
+        elif enviada:
             resultado["nota"] = (
                 "el PDF ya le llegó al cliente por WhatsApp; acompáñalo con tu texto y "
                 "pregúntale si tiene dudas o si quiere apartar"
+            )
+        if enviada:
+            # El modelo decía «$290,000 + IVA» de un total que ya lo trae.
+            resultado["iva"] = (
+                "el total y el anticipo YA incluyen IVA: si los dices, di «IVA incluido»; "
+                "nunca «+ IVA» ni «más IVA» sobre el total"
             )
         else:
             resultado["nota"] = (

@@ -418,3 +418,27 @@ async def test_cotizar_a_nombre_de_una_empresa(respx_mock):
     fichas = [json.loads(c.request.content)["ficha"] for c in rutas["ficha"].calls]
     assert {"empresa": "Domos Garza", "nombre": "Saúl"} in fichas
     await ctx.crm.aclose()
+
+
+async def test_cotizacion_repetida_no_se_anuncia_como_nueva(respx_mock):
+    ctx = _ctx()
+    _con_vendedor(respx_mock)
+    respx_mock.post(f"{CRM_URL}/api/bot/cotizacion").mock(
+        return_value=httpx.Response(
+            200, json={"estado": "enviada", "folio": "COT-0006", "total": "$145,000.00", "anticipo": "$72,500.00", "repetida": True}
+        )
+    )
+    ctx.llm.replies = [
+        LlmReply(
+            content=None,
+            tool_calls=[ToolCall(id="c", name="cotizar", arguments={"items": [{"producto_id": "mini", "cantidad": 1}], "a_nombre_de": "Laura Martínez"})],
+        ),
+        LlmReply(content="Ya te la mandé hace un momento."),
+    ]
+    await _turno(ctx, "Sí, cotízalo")
+    resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
+    assert resultado["repetida"] is True and resultado["folio"] == "COT-0006"
+    assert "MISMA cotización COT-0006" in resultado["nota"]
+    assert "YA incluyen IVA" in resultado["iva"]
+    await ctx.crm.aclose()
+
